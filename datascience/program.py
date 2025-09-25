@@ -77,6 +77,7 @@ dataset.to_csv('dataset.csv', index=False, na_rep='')
 # Conversion Fahrenheit en Celsius
 dataset['Temperature'] = (dataset['Temperature'] - 32) * 5 / 9
 
+# Hotfix pour des valeurs plus plausible
 dataset['Customer_Traffic'] = dataset['Customer_Traffic'] + np.random.randint(28000, 43001, size=len(dataset))
 
 ### Dashboard ###
@@ -101,7 +102,6 @@ all_store_sales = dataset.groupby("Address")["Weekly_Sales"].mean().sort_values(
 col1,col2 = st.columns(2)
 with col1:
     top_5 = all_store_sales.head(5).reset_index()
-    #top_5 = top_5.drop('count')
     top_5 = top_5.apply(
         lambda col: col.map(lambda x: f"{x:,.2f}".replace(",", " ") if isinstance(x, (int, float)) else x
         ) if col.dtype in ['int64', 'float64'] else col
@@ -113,7 +113,6 @@ with col1:
 
 with col2:
     flop_5 = all_store_sales.tail(5).reset_index()
-    #flop_5 = flop_5.drop('count')
     flop_5 = flop_5.apply(
         lambda col: col.map(lambda x: f"{x:,.2f}".replace(",", " ") if isinstance(x, (int, float)) else x
         ) if col.dtype in ['int64', 'float64'] else col
@@ -126,8 +125,6 @@ with col2:
 avg_sales_promo = dataset[dataset["Promotion_Flag"] == 1]["Weekly_Sales"].mean()
 avg_sales_no_promo = dataset[dataset["Promotion_Flag"] == 0]["Weekly_Sales"].mean()
 
-delta = avg_sales_promo - avg_sales_no_promo
-
 st.subheader("Promotion Statistics")
 col1,col2,col3 = st.columns(3)
 with col1:
@@ -137,6 +134,7 @@ with col2:
     st.metric(f"Average sales (without promotions)", f"{avg_sales_no_promo:,.0f}")
 
 with col3:
+    delta = avg_sales_promo - avg_sales_no_promo
     st.metric(f"Average gain", f"{delta:,.0f} units")
 
 st.divider()
@@ -210,8 +208,9 @@ with col2:
     st.subheader("Sales Trends")
     st.altair_chart(store_sales_chart, use_container_width=True)
 
-st.subheader("Sales Prediction")
-X = selected_store_data[["Customer_Traffic", "Promotion_Flag", "Satisfaction_Score"]]
+
+features = ["Customer_Traffic", "Promotion_Flag", "Satisfaction_Score"]
+X = selected_store_data[features]
 y = selected_store_data["Weekly_Sales"]
 
 model = LinearRegression()
@@ -219,11 +218,36 @@ model.fit(X, y)
 
 y_pred = model.predict(X)
 
-fig, ax = plt.subplots()
-ax.plot(selected_store_data["Date"], y, marker='o', label="Sales")
-ax.plot(selected_store_data["Date"], y_pred, marker='x', linestyle='--', label="Sales Prediction")
-ax.set_title(f"Sales Evolution - Store {selected_store_data}")
+weeks_per_year = 52
+years_ahead = 3
+total_weeks = weeks_per_year * years_ahead
+
+last_row = X.iloc[-1]
+
+future_dates = pd.date_range(start=selected_store_data["Date"].max() + pd.Timedelta(days=7), periods=total_weeks, freq='W')
+future_X = pd.DataFrame(columns=features, index=range(total_weeks))
+
+for i in range(total_weeks):
+    year_offset = i // weeks_per_year
+    growth_factor = 1.15 ** year_offset
+    
+    future_X.loc[i, "Customer_Traffic"] = last_row["Customer_Traffic"] * growth_factor
+    future_X.loc[i, "Satisfaction_Score"] = last_row["Satisfaction_Score"] * growth_factor
+    future_X.loc[i, "Promotion_Flag"] = last_row["Promotion_Flag"]  # keep constant or adjust as needed
+
+future_sales_pred = model.predict(future_X)
+
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(selected_store_data["Date"], y, marker='o', label="Actual Sales")
+ax.plot(future_dates, future_sales_pred, marker='o', linestyle='--', color='orange', label=f"Future Sales (+15% growth/year)")
+
 ax.set_xlabel("Date")
 ax.set_ylabel("Weekly Sales")
+ax.set_title("Sales and Future Sales Predictions with 15% Annual Growth")
 ax.legend()
+
+plt.xticks(rotation=45)
+plt.tight_layout()
+
+st.subheader("Sales Prediction with Compound 15% Growth per Year")
 st.pyplot(fig)
